@@ -8,6 +8,18 @@
 // Parses java tags in the path recusively and store them in the tags_store.
 void java_tags_parse(const gchar* path, JavaTagsStore* tags_store);
 
+// Parser stats.
+typedef struct _JavaTagsParserStats {
+  // Scanned files and directories.
+  gint nodes;
+  // Scanned directories.
+  gint dirs;
+  // Parsed files.
+  gint files;
+  // Tags.
+  gint tags;
+} JavaTagsParserStats;
+
 // Asynchronous parser for java tags.
 typedef struct _JavaTagsParser {
   // Paths to scan and parse. Owned.
@@ -18,6 +30,10 @@ typedef struct _JavaTagsParser {
   GMutex* _mutex;
   // private: Worker thread.
   GThread* _thread;
+  // private: Stats.
+  JavaTagsParserStats _stats; // Updated only by the worker thread.
+  // private: Thread safe stats.
+  JavaTagsParserStats _safe_stats;
   // private: Abort signal.
   gboolean _abort;
   // private: Orphan flag.
@@ -36,6 +52,9 @@ void jt_parser_start(JavaTagsParser* parser);
 // Waits until the parser has finished.
 // Thread safe.
 void jt_parser_wait(JavaTagsParser* parser);
+
+// Gets stats from parser.
+void jt_parser_get_stats(JavaTagsParser* parser, JavaTagsParserStats* stats);
 
 // Signals the parser to abort as soon as possible. Has no effect if already finished or aborted.
 // Waiting may return quicker.

@@ -114,6 +114,16 @@ static void jtp_on_configure_response(GtkDialog* dlg, gint resp, JTPrefsDlg* pre
 // Tags store.
 ////////////////////////////////////////////////////////////////////////////////
 
+static gboolean jtp_show_parser_stats(JavaTagsParser* tags_parser) {
+  if (jtp_instance.tags_parser != tags_parser) {
+    return FALSE;
+  }
+  JavaTagsParserStats stats;
+  jt_parser_get_stats(tags_parser, &stats);
+  ui_set_statusbar(FALSE, "Java tags: %d", stats.tags);
+  return TRUE;
+}
+
 static void jtp_load_tags(JavaTagsPlugin* jtp) {
   GPtrArray* paths = g_ptr_array_new_with_free_func((GDestroyNotify) g_free);
   gchar** ppath;
@@ -128,6 +138,8 @@ static void jtp_load_tags(JavaTagsPlugin* jtp) {
     }
   }
   jtp->tags_parser = jt_parser_new(paths, java_tags_store_new());
+  // TODO: This segfaults when unloaded.
+  g_timeout_add_seconds(3, (GSourceFunc) jtp_show_parser_stats, jtp->tags_parser);
   jt_parser_start(jtp->tags_parser);
 }
 
@@ -137,6 +149,7 @@ static void jtp_wait_tags(JavaTagsPlugin* jtp) {
   }
   jt_parser_wait(jtp->tags_parser);
   jtp->tags_store = jtp->tags_parser->tags_store;
+  jtp_show_parser_stats(jtp->tags_parser);
   jt_parser_free(jtp->tags_parser);
   jtp->tags_parser = NULL;
 }

@@ -20,62 +20,75 @@ static gchar* g_strcut(const gchar* s, gsize cut_size) {
   return g_strndup(s, size-cut_size);
 }
 
-typedef struct _JavaTagsParseData {
-  gchar* path;
-  JavaTagsStore* store;
-} JavaTagsParseData;
-
-static gint java_tags_parse_recursive(const gchar* path, JavaTagsStore* tags_store);
-static gpointer java_tags_parse_thread(JavaTagsParseData* data);
-
-void java_tags_parse(const gchar* path, JavaTagsStore* tags_store) {
-  gint tags_count = java_tags_parse_recursive(path, tags_store);
-  g_message("Extracted %d java tags from %s", tags_count, path);
+static void jt_parser_stats_init(JavaTagsParserStats* stats) {
+  stats->nodes = 0;
+  stats->dirs = 0;
+  stats->files = 0;
+  stats->tags = 0;
 }
 
-static gint java_tags_parse_recursive(const gchar* path, JavaTagsStore* tags_store) {
-  gint count = 0;
+static void jt_parser_stats_copy(JavaTagsParserStats* src, JavaTagsParserStats* dst) {
+  dst->nodes = src->nodes;
+  dst->dirs = src->dirs;
+  dst->files = src->files;
+  dst->tags = src->tags;
+}
+
+static void jt_parser_parse_file(JavaTagsParser* parser, const gchar* dirpath, const gchar* file) {
+  GIOChannel* channel = g_io_channel_new_file(dirpath, "r", NULL);
+  if (channel) {
+    gchar* package = NULL;
+    gchar* line;
+    while (!package && g_io_channel_read_line(channel, &line, NULL, NULL, NULL) == G_IO_STATUS_NORMAL) {
+      if (g_str_has_prefix(line, "package")) {
+        package = g_strstrip(g_strdup(line + /*len("package")*/7));
+        gchar* package_end = g_strstr_len(package, -1, ";");
+        if (package_end) {
+          *package_end = '\0';
+        }
+      }
+      g_free(line);
+    }
+    if (package) {
+      gchar* tag = g_strcut(file, /*len(".java")*/5);
+      gchar* fullname = g_strconcat(package, ".", tag, NULL);
+      java_tags_store_add(parser->tags_store, tag, fullname);
+      g_free(fullname);
+      g_free(tag);
+      parser->_stats.tags++;
+    }
+  }
+  g_io_channel_close(channel);
+  parser->_stats.files++;
+}
+
+static gboolean jt_parser_parse_recursive(JavaTagsParser* parser, const gchar* path) {
   GDir* dir = g_dir_open(path, 0, NULL);
 
   const gchar* file;
-  while ((file = g_dir_read_name(dir)) != NULL) {
+  gboolean aborted = FALSE;
+  while (!aborted && (file = g_dir_read_name(dir)) != NULL) {
     if (!g_strcmp0(file, ".") || !g_strcmp0(file, "..")) {
       continue;
     }
+    if (parser->_stats.nodes++ % 10 == 1) {
+      aborted = jt_parser_aborted(parser);
+      g_mutex_lock(parser->_mutex);
+      jt_parser_stats_copy(&parser->_stats, &parser->_safe_stats);
+      g_mutex_unlock(parser->_mutex);
+    }
     gchar* dirpath = g_build_filename(path, file, NULL);
     if (g_file_test(dirpath, G_FILE_TEST_IS_DIR)) {
-      count += java_tags_parse_recursive(dirpath, tags_store);
+      aborted = jt_parser_parse_recursive(parser, dirpath);
     } else if (g_str_has_suffix(file, ".java") && g_file_test(dirpath, G_FILE_TEST_IS_REGULAR)) {
-      GIOChannel* channel = g_io_channel_new_file(dirpath, "r", NULL);
-      if (channel) {
-        gchar* package = NULL;
-        gchar* line;
-        while (!package && g_io_channel_read_line(channel, &line, NULL, NULL, NULL) == G_IO_STATUS_NORMAL) {
-          if (g_str_has_prefix(line, "package")) {
-            package = g_strstrip(g_strdup(line + /*len("package")*/7));
-            gchar* package_end = g_strstr_len(package, -1, ";");
-            if (package_end) {
-              *package_end = '\0';
-            }
-          }
-          g_free(line);
-        }
-        if (package) {
-          ++count;
-          gchar* tag = g_strcut(file, /*len(".java")*/5);
-          gchar* fullname = g_strconcat(package, ".", tag, NULL);
-          java_tags_store_add(tags_store, tag, fullname);
-          g_free(fullname);
-          g_free(tag);
-        }
-      }
-      g_io_channel_close(channel);
+      jt_parser_parse_file(parser, dirpath, file);
     }
     g_free(dirpath);
   }
 
   g_dir_close(dir);
-  return count;
+  parser->_stats.dirs++;
+  return aborted;
 }
 
 JavaTagsParser* jt_parser_new(GPtrArray* paths, JavaTagsStore* tags_store) {
@@ -83,6 +96,8 @@ JavaTagsParser* jt_parser_new(GPtrArray* paths, JavaTagsStore* tags_store) {
   parser->paths = paths;
   parser->tags_store = tags_store;
   parser->_mutex = g_mutex_new();
+  jt_parser_stats_init(&parser->_stats);
+  jt_parser_stats_init(&parser->_safe_stats);
   parser->_thread = NULL;
   parser->_abort = FALSE;
   parser->_orphan = FALSE;
@@ -105,8 +120,11 @@ void jt_parser_free(JavaTagsParser* parser) {
 gpointer jt_parser_thread(JavaTagsParser* parser) {
   int i;
   for (i = 0; !jt_parser_aborted(parser) && i < parser->paths->len; ++i) {
-    java_tags_parse((const gchar*) parser->paths->pdata[i], parser->tags_store);
+    jt_parser_parse_recursive(parser, (const gchar*) parser->paths->pdata[i]);
   }
+  g_mutex_lock(parser->_mutex);
+  jt_parser_stats_copy(&parser->_stats, &parser->_safe_stats);
+  g_mutex_unlock(parser->_mutex);
   return NULL;
 }
 
@@ -130,6 +148,12 @@ void jt_parser_wait(JavaTagsParser* parser) {
     parser->_thread = NULL;
     g_mutex_unlock(parser->_mutex);
   }
+}
+
+void jt_parser_get_stats(JavaTagsParser* parser, JavaTagsParserStats* stats) {
+  g_mutex_lock(parser->_mutex);
+  jt_parser_stats_copy(&parser->_safe_stats, stats);
+  g_mutex_unlock(parser->_mutex);
 }
 
 void jt_parser_abort(JavaTagsParser* parser) {

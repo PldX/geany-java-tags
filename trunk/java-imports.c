@@ -30,12 +30,16 @@ void java_import(const gchar* import, const gchar** import_groups_order, Scintil
   GRegex** regexes = g_new(GRegex*, array_len((const gpointer*) import_groups_order) + 1);
   gint i;
   for (pr = regexes, i = 0; import_groups_order[i]; ++i) {
-    *pr = g_regex_new(import_groups_order[i], 0, G_REGEX_MATCH_ANCHORED, NULL);
-    if (*pr) {
-      ++pr;
-    } else {
-      g_warning("Invalid regex: %s", import_groups_order[i]);
+    gchar* regex_str = g_strstrip(g_strdup(import_groups_order[i]));
+    if (*regex_str) {
+      *pr = g_regex_new(regex_str, 0, G_REGEX_MATCH_ANCHORED, NULL);
+      if (*pr) {
+        ++pr;
+      } else {
+        g_warning("Invalid regex: %s", import_groups_order[i]);
+      }
     }
+    g_free(regex_str);
   }
   *pr = NULL;
   gint order = java_import_groups_get_order(import, (const GRegex**) regexes);

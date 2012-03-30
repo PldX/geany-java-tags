@@ -33,13 +33,21 @@ def plugin():
   plugin_lib.AddObj(c_compiler.Obj(cres_compiler.Resource('java_tags_select_dlg.glade')))
   plugin_lib.AddObj(c_compiler.Obj(cres_compiler.Resource('java_tags_prefs_dlg.glade')))
   plugin_lib.AddObj(c_compiler.Obj('utils.c'))
+  plugin_lib.AddObj(c_compiler.Obj('text.c'))
   plugin_lib.AddObj(c_compiler.Obj('java-tags-store.c'))
   plugin_lib.AddObj(c_compiler.Obj('java-tags-prefs.c'))
   plugin_lib.AddObj(c_compiler.Obj('java-tags-prefs-edit.c'))
   plugin_lib.AddObj(c_compiler.Obj('java-tags-parse.c'))
   plugin_lib.AddObj(c_compiler.Obj('java-tags-select.c'))
-  plugin_lib.AddObj(c_compiler.Obj('sci-utils.c'))
+  plugin_lib.AddObj(c_compiler.Obj('java-parser-common.c'))
+  plugin_lib.AddObj(c_compiler.Obj('java-parser-whitespace.c'))
+  plugin_lib.AddObj(c_compiler.Obj('java-parser-import.c'))
+  plugin_lib.AddObj(c_compiler.Obj('java-parser-package.c'))
+  plugin_lib.AddObj(c_compiler.Obj('java-parser-type.c'))
+  plugin_lib.AddObj(c_compiler.Obj('java-parser.c'))
   plugin_lib.AddObj(c_compiler.Obj('java-imports.c'))
+  plugin_lib.AddObj(c_compiler.Obj('sci-text.c'))
+  plugin_lib.AddObj(c_compiler.Obj('sci-utils.c'))
   plugin_lib.AddObj(c_compiler.Obj('plugin.c'))
   plugin_lib.libs.extend(config.libs)
   return plugin_lib
@@ -86,6 +94,55 @@ def parser_test():
   test_bin.AddObj(c_compiler.Obj('java-tags-store.c'))
   test_bin.AddObj(c_compiler.Obj('java-tags-parse.c'))
   test_bin.AddObj(c_compiler.Obj('java-tags-parse-test.c'))
+  return test_bin
+
+def string_text_test():
+  config = configure()
+  test_bin = blib.Executable('string_text_test')
+  test_bin.libs.extend(config.libs)
+  c_compiler = blib.CCompiler(config.cflags)
+  test_bin.AddObj(c_compiler.Obj('text.c'))
+  test_bin.AddObj(c_compiler.Obj('utils.c'))
+  test_bin.AddObj(c_compiler.Obj('string-text.c'))
+  test_bin.AddObj(c_compiler.Obj('test.c'))
+  test_bin.AddObj(c_compiler.Obj('string-text-test.c'))
+  return test_bin
+
+def java_parser_test():
+  config = configure()
+  test_bin = blib.Executable('java_parser_test')
+  test_bin.libs.extend(config.libs)
+  c_compiler = blib.CCompiler(config.cflags)
+  test_bin.AddObj(c_compiler.Obj('utils.c'))
+  test_bin.AddObj(c_compiler.Obj('text.c'))
+  test_bin.AddObj(c_compiler.Obj('string-text.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-common.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-whitespace.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-import.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-package.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-type.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser.c'))
+  test_bin.AddObj(c_compiler.Obj('test.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-test.c'))
+  return test_bin
+
+def java_imports_test():
+  config = configure()
+  test_bin = blib.Executable('java_imports_test')
+  test_bin.libs.extend(config.libs)
+  c_compiler = blib.CCompiler(config.cflags)
+  test_bin.AddObj(c_compiler.Obj('utils.c'))
+  test_bin.AddObj(c_compiler.Obj('text.c'))
+  test_bin.AddObj(c_compiler.Obj('string-text.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-common.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-whitespace.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-import.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-package.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser-type.c'))
+  test_bin.AddObj(c_compiler.Obj('java-parser.c'))
+  test_bin.AddObj(c_compiler.Obj('java-imports.c'))
+  test_bin.AddObj(c_compiler.Obj('test.c'))
+  test_bin.AddObj(c_compiler.Obj('java-imports-test.c'))
   return test_bin
 
 def install():

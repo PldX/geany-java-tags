@@ -10,6 +10,7 @@
 #include "java-tags-store.h"
 #include "java-tags-parse.h"
 #include "sci-utils.h"
+#include "sci-text.h"
 
 #include "geanyplugin.h"
 
@@ -199,9 +200,9 @@ static void jtp_on_activate_import(GtkMenuItem* menuitem, JavaTagsPlugin* jtp) {
     gchar* tag = java_tags_select(jtp->tags_store, init_tag);
     if (tag) {
       msgwin_status_add("Selected %s", tag);
-      gchar* import = g_strconcat("import ", tag, ";\n", NULL);
-      msgwin_status_add("Importing %s", import);
-      java_import(import, (const gchar**) jtp->global_prefs->import_groups, sci);
+      Text* sci_text = sci_text_new(sci);
+      java_import(tag, (const gchar**) jtp->global_prefs->import_groups, sci_text);
+      text_free(sci_text);
     }
 
     g_free(tag);

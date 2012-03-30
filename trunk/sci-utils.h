@@ -10,7 +10,7 @@ int is_word_char(gchar ch);
 void sci_get_current_word(ScintillaObject* sci, gint* start, gint* end);
 gchar* sci_get_current_word_text(ScintillaObject* sci);
 
-void sci_replace_text(ScintillaObject* sci, gint start, gint end, gchar* text);
+void sci_replace_text(ScintillaObject* sci, gint start, gint end, const gchar* text);
 void sci_replace_current_word(ScintillaObject* sci, gchar* text);
 
 

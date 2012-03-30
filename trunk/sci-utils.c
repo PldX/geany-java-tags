@@ -36,14 +36,14 @@ gchar* sci_get_current_word_text(ScintillaObject* sci) {
   return sci_get_contents_range(sci, start, end);
 }
 
-void sci_replace_text(ScintillaObject* sci, gint start, gint end, gchar* text) {
+void sci_replace_text(ScintillaObject* sci, gint start, gint end, const gchar* text) {
   gint sel_start = sci_get_selection_start(sci);
   gint sel_end = sci_get_selection_end(sci);
-  
+
   sci_set_selection_start(sci, start);
   sci_set_selection_end(sci, end);
   sci_replace_sel(sci, text);
-  
+
   gint sel_delta = strlen(text) - (start - end);
   if (sel_start > end) {
     sel_start += sel_delta;

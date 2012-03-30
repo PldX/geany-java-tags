@@ -1,170 +1,291 @@
 #include "java-imports.h"
-#include "sci-utils.h"
+
+#include <string.h>
+
+#include "java-parser.h"
+#include "text.h"
 #include "utils.h"
 
-GeanyFunctions* geany_functions;  // Required by sci* methods
+// Finds the group index for an import declaration relative to user specified
+// import groups order.
+//
+// import_groups_order is complete: an implicit match all is assumed at the end.
+// Returned index is never negative, but posibly equal to len(import_groups_order).
+static unsigned int java_import_group_index(
+    const gchar** import_groups_order,
+    const JavaImportDeclaration* import);
+// Various variants that iterates over a null-terminated array of import declarations
+// to find the first matching import.
+// Returns a reference to the first matching import declaration or NULL if not found.
+static const JavaImportDeclaration** java_import_first_import_same_group(
+    const JavaImportDeclaration** imports,
+    const gchar** import_groups_order,
+    unsigned int import_group_index);
+static const JavaImportDeclaration** java_import_next_import_same_group(
+    const JavaImportDeclaration** imports,
+    const JavaImportDeclaration* import,
+    const gchar** import_groups_order,
+    unsigned int import_group_index);
+static const JavaImportDeclaration** java_import_last_import_same_group(
+    const JavaImportDeclaration** imports,
+    const gchar** import_groups_order,
+    unsigned int import_group_index);
+static const JavaImportDeclaration** java_import_first_import_next_group(
+    const JavaImportDeclaration** imports,
+    const gchar** import_groups_order,
+    unsigned int import_group_index);
+static const JavaImportDeclaration** java_import_last_import(
+    const JavaImportDeclaration** imports);
 
-/**
- * An import group is a list of consecutive import lines that matches the same
- * regular expression.
- */
-typedef struct _ImportGroup {
-  // Index of the first line number in the document of the import group.
-  gint line;
-  // The content of the import group.
-  gchar** imports;
-  // The index of the matched regexp.
-  gint order;
-} ImportGroup;
+static enum JavaImportOptions {
+  // Inserts the import after specified position.
+  INSERT_AFTER = 0x01,
+  // Inserts the import before specified position.
+  INSERT_BEFORE = 0x02,
+  // Inserts an empty line after the new import.
+  INSERT_LINE_AFTER = 0x04,
+  // Inserts an empty line before the new import.
+  INSERT_LINE_BEFORE = 0x08,
+  // Skips empty lines in text before insert.
+  SKIP_EMPTY_LINES = 0x10,
+};
+// Actual text insert method that formats the text to be output.
+// Accepts variations through bit-style options.
+static void java_import_insert(const JavaImportDeclaration* import,
+                               Text* text, unsigned int pos,
+                               unsigned int options);
+void java_import(const gchar* type_name, const gchar** import_groups_order,
+                 Text* sci_text) {
+  // Find the group order for imported type name.
+  JavaImportDeclaration import;
+  import.static_import = FALSE;
+  import.on_demand = FALSE;
+  import.type_name = (char*) type_name;
+  unsigned int import_group_index = java_import_group_index(
+      import_groups_order,
+      &import);
 
-static gint java_import_groups_get_order(const gchar* import, const GRegex** order);
-static ImportGroup* java_import_group_new(gint order, gint line);
-static ImportGroup** java_import_groups_parse(ScintillaObject* sci, const GRegex** order_regex);
-static void java_import_group_insert(ImportGroup* import_group, const gchar* import);
-static ImportGroup** java_import_groups_ensure_order(ImportGroup** import_groups, gint order);
-static void java_import_group_write(ImportGroup* import_group, ScintillaObject* sci);
-static void java_import_groups_free(ImportGroup** import_groups);
-
-void java_import(const gchar* import, const gchar** import_groups_order, ScintillaObject* sci) {
-  GRegex** pr;
-  GRegex** regexes = g_new(GRegex*, array_len((const gpointer*) import_groups_order) + 1);
-  gint i;
-  for (pr = regexes, i = 0; import_groups_order[i]; ++i) {
-    gchar* regex_str = g_strstrip(g_strdup(import_groups_order[i]));
-    if (*regex_str) {
-      *pr = g_regex_new(regex_str, 0, G_REGEX_MATCH_ANCHORED, NULL);
-      if (*pr) {
-        ++pr;
+  // Parse imports in the document.
+  JavaParseOptions parse_opts;
+  java_parse_opts_init(&parse_opts);
+  parse_opts.extract_package = TRUE;
+  parse_opts.extract_imports = TRUE;
+  JavaDocStructure* java_doc = java_parse(sci_text, &parse_opts);
+  if (java_doc) {
+    // Fint first existing import in the import group where the import should be inserted.
+    const JavaImportDeclaration** first_import_same_group = java_import_first_import_same_group(
+        (const JavaImportDeclaration**) java_doc->import_declarations,
+        import_groups_order,
+        import_group_index);
+    // Insert import in the existing import group.
+    if (first_import_same_group) {
+      // Find insert position import in the import group where the import should be inserted.
+      const JavaImportDeclaration** next_import_same_group = java_import_next_import_same_group(
+          first_import_same_group,
+          &import,
+          import_groups_order,
+          import_group_index);
+      if (next_import_same_group) {
+        // Insert before next import in alphabetic order.
+        java_import_insert(&import,
+                           sci_text, (*next_import_same_group)->fragment.begin,
+                           SKIP_EMPTY_LINES | INSERT_BEFORE);
       } else {
-        g_warning("Invalid regex: %s", import_groups_order[i]);
+        // Find last import in the import group where the import should be inserted.
+        const JavaImportDeclaration** last_import_same_group = java_import_last_import_same_group(
+            first_import_same_group,
+            import_groups_order,
+            import_group_index);
+        // Insert after last import in group.
+        java_import_insert(&import,
+                           sci_text, (*last_import_same_group)->fragment.end,
+                           INSERT_AFTER);
+      }
+    // Insert import as a new import group.
+    } else {
+      // Find next import group.
+      const JavaImportDeclaration** first_import_next_group = java_import_first_import_next_group(
+          (const JavaImportDeclaration**) java_doc->import_declarations,
+          import_groups_order,
+          import_group_index);
+      if (first_import_next_group) {
+        // Insert before next import group.
+        java_import_insert(&import,
+                           sci_text, (*first_import_next_group)->fragment.begin,
+                           INSERT_BEFORE | INSERT_LINE_AFTER | SKIP_EMPTY_LINES);
+      } else {
+        // Find last absolute import.
+        const JavaImportDeclaration** last_import = java_import_last_import(
+            (const JavaImportDeclaration**) java_doc->import_declarations);
+        if (last_import) {
+          // Insert after last import.
+          java_import_insert(&import,
+                             sci_text, (*last_import)->fragment.end,
+                             INSERT_AFTER | INSERT_LINE_BEFORE);
+        } else if (java_doc->package_declaration) {
+          // Insert after package declaration.
+          java_import_insert(&import,
+                             sci_text, java_doc->package_declaration->fragment.end,
+                             INSERT_AFTER | INSERT_LINE_BEFORE);
+        } else {
+          // Insert at the begining of the file; don't skip comments because it is
+          // ambiguous whether they are file header or belongs to the first type in
+          // the file.
+          java_import_insert(&import,
+                             sci_text, 0,
+                             INSERT_AFTER | INSERT_LINE_AFTER);
+        }
       }
     }
-    g_free(regex_str);
   }
-  *pr = NULL;
-  gint order = java_import_groups_get_order(import, (const GRegex**) regexes);
-  if (order >= 0) {
-    ImportGroup** import_groups = java_import_groups_parse(sci, (const GRegex**) regexes);
-    import_groups = java_import_groups_ensure_order(import_groups, order);
-    ImportGroup* import_group = NULL;
-    ImportGroup** pig;
-    for (pig = import_groups; *pig; ++pig) {
-      if ((*pig)->order == order) {
-        import_group = *pig;
-        break;
-      }
-    }
-    java_import_group_insert(import_group, import);
-    java_import_group_write(import_group, sci);
-    java_import_groups_free(import_groups);
-  }
-  for (pr = regexes; *pr; ++pr) {
-    g_regex_unref(*pr);
-  }
-  g_free(regexes);
+  java_doc_free(java_doc);
 }
 
-static ImportGroup* java_import_group_new(gint order, gint line) {
-  ImportGroup* import_group = g_new(ImportGroup, 1);
-  import_group->order = order;
-  import_group->line = line;
-  import_group->imports = g_new0(gchar*, 1);
-  return import_group;
+static unsigned int java_import_group_index(
+    const gchar** import_groups_order,
+    const JavaImportDeclaration* import) {
+  int index = -1;
+  int index_score = 0;
+  int i;
+  for (i = 0; import_groups_order[i]; ++i) {
+    gboolean static_match = FALSE;
+    const gchar* import_group_prefix = import_groups_order[i];
+    if (g_str_has_prefix(import_group_prefix, "static:")) {
+      static_match = TRUE;
+      import_group_prefix += strlen("static:");
+    }
+    int score = 0;
+    if (static_match) {
+      score += import->static_import ? 100 : -100;
+    }
+    if (g_str_has_prefix(import->type_name, import_group_prefix)) {
+      score += strlen(import_group_prefix);
+    }
+    if (score > index_score) {
+      index = i;
+      index_score = score;
+    }
+  }
+  if (index == -1) {
+    index = i;
+  }
+  return index;
 }
 
-static gint java_import_groups_get_order(const gchar* import, const GRegex** regexes) {
-  const GRegex** pr;
-  for (pr = regexes; *pr; ++pr) {
-    if (g_regex_match(*pr, import, G_REGEX_MATCH_ANCHORED, NULL)) {
-      return (pr - regexes);
-    }
-  }
-  return -1;
+static gboolean same_group(const JavaImportDeclaration* import,
+                           const gchar** import_groups_order,
+                           unsigned int import_group_index) {
+  return java_import_group_index(import_groups_order, import) == import_group_index;
 }
 
-static ImportGroup** java_import_groups_parse(ScintillaObject* sci, const GRegex** regexes) {
-  ImportGroup** import_groups = g_new0(ImportGroup*, 1);
-  ImportGroup* import_group = NULL;
-  gint i, n = sci_get_line_count(sci);
-  for (i = 0; i < n; ++i) {
-    gchar* line = sci_get_line(sci, i);
-    gint order = java_import_groups_get_order(line, regexes);
-    if (import_group != NULL && import_group->order != order) {
-      import_group = NULL;
+static const JavaImportDeclaration** java_import_first_import_same_group(
+    const JavaImportDeclaration** imports,
+    const gchar** import_groups_order,
+    unsigned int import_group_index) {
+  const JavaImportDeclaration** import_ptr = NULL;
+  int i;
+  for (i = 0; !import_ptr && imports[i]; ++i) {
+    if (same_group(imports[i], import_groups_order, import_group_index)) {
+      import_ptr = imports + i;
     }
-    if (import_group == NULL && order != -1) {
-      import_group = java_import_group_new(order, i);
-      import_groups = (ImportGroup**) array_add(
-          (gpointer*) import_groups, (gpointer) import_group);
-    }
-    if (import_group != NULL) {
-      import_group->imports = (gchar**) array_add(
-          (gpointer*) (import_group->imports), (gpointer) g_strdup(line));
-    }
-    g_free(line);
   }
-  return import_groups;
+  return import_ptr;
 }
 
-static void java_import_group_insert(ImportGroup* import_group, const gchar* import) {
-  gchar** new_imports = g_new0(gchar*, array_len((gpointer*)(import_group->imports)) + 2);
-  gchar** pi;
-  gchar** pni = new_imports;
-  for (pi = import_group->imports; *pi; ++pi) {
-    if (g_strcmp0(import, *pi) < 0) {
-      break;
+static const JavaImportDeclaration** java_import_next_import_same_group(
+    const JavaImportDeclaration** imports,
+    const JavaImportDeclaration* import,
+    const gchar** import_groups_order,
+    unsigned int import_group_index) {
+  const JavaImportDeclaration** import_ptr = NULL;
+  int i;
+  for (i = 0; !import_ptr && imports[i] && same_group(imports[i], import_groups_order, import_group_index); ++i) {
+    if (g_strcmp0(import->type_name, /* <= */ imports[i]->type_name) <= 0) {
+      // First in imports bigger then import.
+      import_ptr = imports + i;
     }
-    *pni = *pi;
-    ++pni;
   }
-  if (!*pi || g_strcmp0(import, *pi)) {
-    *pni = g_strdup(import); // Only the new import is dupped.
-    ++pni;
-  }
-  for (; *pi; ++pi) {
-    *pni = *pi;
-    ++pni;
-  }
-  g_free(import_group->imports); // Existing imports are moved by reference.
-  import_group->imports = new_imports;
+  return import_ptr;
 }
 
-static ImportGroup** java_import_groups_ensure_order(ImportGroup** import_groups, gint order) {
-  gint line = 0;
-  ImportGroup** pig;
-  for (pig = import_groups; *pig; ++pig) {
-    if ((*pig)->order == order) {
-      return import_groups;
-    } else if ((*pig)->order < order) {
-      line = (*pig)->line;
-      break;
-    }
-    line = (*pig)->line + array_len((gpointer*)((*pig)->imports));
+static const JavaImportDeclaration** java_import_last_import_same_group(
+    const JavaImportDeclaration** imports,
+    const gchar** import_groups_order,
+    unsigned int import_group_index) {
+  const JavaImportDeclaration** import_ptr = imports;
+  int i;
+  for (i = 0; imports[i] && same_group(imports[i], import_groups_order, import_group_index); ++i) {
+    import_ptr = imports + i;
   }
-  ImportGroup* import_group = java_import_group_new(order, line);
-  return (ImportGroup**) array_insert(
-      (gpointer*) import_groups, pig-import_groups,
-      (gpointer) import_group);
+  return import_ptr;
 }
 
-static void java_import_group_write(ImportGroup* import_group, ScintillaObject* sci) {
-  gint i;
-  gchar** import;
-  for (i = import_group->line, import = import_group->imports; *import; ++import, ++i) {
-    g_message("Attempt to write line %i: %s", i, *import);
-    gchar* line = sci_get_line(sci, i);
-    if (g_strcmp0(line, *import) != 0) {
-      sci_insert_text(sci, sci_get_position_from_line(sci, i), *import);
+static const JavaImportDeclaration** java_import_first_import_next_group(
+    const JavaImportDeclaration** imports,
+    const gchar** import_groups_order,
+    unsigned int import_group_index) {
+  const JavaImportDeclaration** import_ptr = NULL;
+  int i;
+  for (i = 0; !import_ptr && imports[i]; ++i) {
+    if (java_import_group_index(import_groups_order, imports[i]) > import_group_index) {
+      import_ptr = imports + i;
     }
-    g_free(line);
   }
+  return import_ptr;
 }
 
-static void java_import_groups_free(ImportGroup** import_groups) {
-  ImportGroup** pig;
-  for (pig = import_groups; *pig; ++pig) {
-    g_strfreev((*pig)->imports);
-    g_free(*pig);
+static const JavaImportDeclaration** java_import_last_import(
+    const JavaImportDeclaration** imports) {
+  const JavaImportDeclaration** import_ptr = NULL;
+  int i;
+  for (i = 0; imports[i]; ++i) {
+    import_ptr = imports + i;
   }
-  g_free(import_groups);
+  return import_ptr;
+}
+
+static unsigned int skip_empty_lines(Text* text, unsigned int pos) {
+  char ch = text_get_char(text, pos);
+  if (ch == '\n') {
+    // LF
+    ++pos;
+  } else if (ch == '\r') {
+    // CR
+    ++pos;
+    ch = text_get_char(text, pos);
+    if (ch == '\n') {
+      // CR LF
+      ++pos;
+    }
+  }
+  return pos;
+}
+
+static void java_import_insert(const JavaImportDeclaration* import,
+                               Text* text, unsigned int pos,
+                               unsigned int options) {
+  if (options & SKIP_EMPTY_LINES) {
+    pos = skip_empty_lines(text, pos);
+  }
+
+  char* import_text = g_strdup("");
+  if (options & INSERT_LINE_BEFORE) {
+    import_text = g_stradd(import_text, "\n");
+  }
+  import_text = g_stradd(import_text, "import ");
+  if (import->static_import) {
+    import_text = g_stradd(import_text, "static ");
+  }
+  import_text = g_stradd(import_text, import->type_name);
+  if (import->on_demand) {
+    import_text = g_stradd(import_text, ".*");
+  }
+  import_text = g_stradd(import_text, ";\n");
+  if (options & INSERT_LINE_AFTER) {
+    import_text = g_stradd(import_text, "\n");
+  }
+
+  text_set_range(text, pos, 0, import_text);
+
+  g_free(import_text);
 }

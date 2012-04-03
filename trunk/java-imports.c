@@ -85,7 +85,10 @@ void java_import(const gchar* type_name, const gchar** import_groups_order,
           &import,
           import_groups_order,
           import_group_index);
-      if (next_import_same_group) {
+      if (next_import_same_group &&
+          !g_strcmp0((*next_import_same_group)->type_name, import.type_name)) {
+        // Nothing to do: the import is already included.
+      } else if (next_import_same_group) {
         // Insert before next import in alphabetic order.
         java_import_insert(&import,
                            sci_text, (*next_import_same_group)->fragment.begin,

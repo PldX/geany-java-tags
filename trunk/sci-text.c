@@ -51,7 +51,13 @@ static void sci_text_set_range(ScintillaObject* sci, unsigned int i, int n, cons
   if (i + n > length) {
     n = length - i;
   }
-  sci_replace_text(sci, i, i+n, src);
+  if (n) {
+    // TODO: Restore current position in sci.
+    sci_replace_text(sci, i, i+n, src);
+  } else {
+    // Use insert because it handles current position properly.
+    sci_insert_text(sci, i, src);
+  }
 }
 
 static int sci_text_is_eof(ScintillaObject* sci, unsigned int i) {

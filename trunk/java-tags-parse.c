@@ -78,7 +78,9 @@ static gboolean jt_parser_parse_recursive(JavaTagsParser* parser, const gchar* p
       g_mutex_unlock(parser->_mutex);
     }
     gchar* dirpath = g_build_filename(path, file, NULL);
-    if (g_file_test(dirpath, G_FILE_TEST_IS_DIR)) {
+    if (g_file_test(dirpath, G_FILE_TEST_IS_SYMLINK)) {
+      // Ignore sym-links.
+    } else if (g_file_test(dirpath, G_FILE_TEST_IS_DIR)) {
       aborted = jt_parser_parse_recursive(parser, dirpath);
     } else if (g_str_has_suffix(file, ".java") && g_file_test(dirpath, G_FILE_TEST_IS_REGULAR)) {
       jt_parser_parse_file(parser, dirpath, file);

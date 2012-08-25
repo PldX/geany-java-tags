@@ -9,8 +9,8 @@
 typedef struct _JTPrefsDlg {
   GtkBuilder* builder;
   GtkDialog* dlg;
-  GtkTreeView* paths_tree;
-  GtkListStore* paths_store;
+  GtkTextView* global_paths;
+  GtkTextView* project_paths;
   GtkTextView* import_groups;
 } JTPrefsDlg;
 

@@ -126,16 +126,20 @@ static gboolean jtp_show_parser_stats(JavaTagsParser* tags_parser) {
 }
 
 static void jtp_load_tags(JavaTagsPlugin* jtp) {
+  const gchar* project_base_path = "";
+  if (geany_data->app->project && geany_data->app->project->base_path) {
+    project_base_path = geany_data->app->project->base_path;
+  }
   GPtrArray* paths = g_ptr_array_new_with_free_func((GDestroyNotify) g_free);
   gchar** ppath;
   if (jtp->global_prefs && jtp->global_prefs->paths) {
     for (ppath = jtp->global_prefs->paths; *ppath; ++ppath) {
-      g_ptr_array_add(paths, (gpointer) g_strdup(*ppath));
+      g_ptr_array_add(paths, (gpointer) g_str_replace(*ppath, "%p", project_base_path));
     }
   }
   if (jtp->project_prefs && jtp->project_prefs->paths) {
     for (ppath = jtp->project_prefs->paths; *ppath; ++ppath) {
-      g_ptr_array_add(paths, (gpointer) g_strdup(*ppath));
+      g_ptr_array_add(paths, (gpointer) g_str_replace(*ppath, "%p", project_base_path));
     }
   }
   jtp->tags_parser = jt_parser_new(paths, java_tags_store_new());

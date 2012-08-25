@@ -120,7 +120,9 @@ void jt_parser_free(JavaTagsParser* parser) {
 gpointer jt_parser_thread(JavaTagsParser* parser) {
   int i;
   for (i = 0; !jt_parser_aborted(parser) && i < parser->paths->len; ++i) {
+    msgwin_status_add("Loading java tags from directory %s.", parser->paths->pdata[i]);
     jt_parser_parse_recursive(parser, (const gchar*) parser->paths->pdata[i]);
+    msgwin_status_add("Finished loading java tags in directory %s.", parser->paths->pdata[i]);
   }
   g_mutex_lock(parser->_mutex);
   jt_parser_stats_copy(&parser->_stats, &parser->_safe_stats);

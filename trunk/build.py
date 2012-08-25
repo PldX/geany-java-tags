@@ -16,11 +16,16 @@ def configure():
     config.cflags.extend(geany.CFlags())
     config.libs.extend(geany.Libs())
     config.install_dir = os.path.join(geany.Variable('libdir').strip(), 'geany')
-    # GTK.
+    # GLIB.
     gtk = blib.PkgConfig('gtk+-2.0')
     gtk.CheckMinVersion('0.20')
-    config.libs.extend(gtk.CFlags())
+    config.cflags.extend(gtk.CFlags())
     config.libs.extend(gtk.Libs())
+    # GTK.
+    glib = blib.PkgConfig('glib-2.0')
+    glib.CheckMinVersion('0.20')
+    config.cflags.extend(glib.CFlags())
+    config.libs.extend(glib.Libs())
 
     blib.SaveConfig(config)
   return config
@@ -83,6 +88,7 @@ def utils_test():
   test_bin.libs.extend(config.libs)
   c_compiler = blib.CCompiler(config.cflags)
   test_bin.AddObj(c_compiler.Obj('utils.c'))
+  test_bin.AddObj(c_compiler.Obj('test.c'))
   test_bin.AddObj(c_compiler.Obj('utils-test.c'))
   return test_bin
 

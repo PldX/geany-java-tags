@@ -20,5 +20,6 @@ void array_free(gpointer* pp, gpointerfree pfree);
 #define STRUCT_DUP(type, src) (type*) g_memdup((gpointer) (src), sizeof(type));
 
 gchar* g_stradd(gchar* dst, const gchar* src);
+gchar* g_str_replace(const gchar* src, const gchar* search, const gchar* replace);
 
 #endif // GEANY_JAVA_TAGS_UTILS_H_

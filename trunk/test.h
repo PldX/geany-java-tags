@@ -1,6 +1,7 @@
 #ifndef TEST_H_
 #define TEST_H_
 
+#include <string.h>
 #include <glib.h>
 
 void test_setup(const char* test);

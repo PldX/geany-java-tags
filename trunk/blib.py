@@ -174,8 +174,8 @@ class SharedLib(Buildable):
       objs.append(obj.Build())
     if RequiresBuild(*Extend([self.output], objs)):
       args = ['g++', '-shared', '-o', self.output]
-      args.extend(self.libs)
       args.extend(objs)
+      args.extend(self.libs)
       RunCmd(args)
       ReportBuilt(*Extend([self.output], objs))
     return self.output
@@ -193,8 +193,8 @@ class Executable(Buildable):
       objs.append(obj.Build())
     if RequiresBuild(*Extend([self.output], objs)):
       args = ['g++', '-o', self.output]
-      args.extend(self.libs)
       args.extend(objs)
+      args.extend(self.libs)
       RunCmd(args)
       ReportBuilt(*Extend([self.output], objs))
     return self.output

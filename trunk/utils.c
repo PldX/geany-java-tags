@@ -45,3 +45,10 @@ gchar* g_stradd(gchar* dst, const gchar* src) {
   g_free(dst);
   return new_dst;
 }
+
+gchar* g_str_replace(const gchar* src, const gchar* search, const gchar* replace) {
+  gchar** split = g_strsplit(src, search, -1);
+  gchar* dst = g_strjoinv(replace, split);
+  g_strfreev(split);
+  return dst;
+}

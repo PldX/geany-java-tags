@@ -5,6 +5,9 @@
 
 #include "java-tags-store.h"
 
+// Private: frees the parser.
+static void jt_parser_free(JavaTagsParser* parser);
+
 static gsize g_strlen(const gchar* s) {
   gsize size;
   for (size = 0; *s; ++s) {
@@ -52,7 +55,9 @@ static void jt_parser_parse_file(JavaTagsParser* parser, const gchar* dirpath, c
     if (package) {
       gchar* tag = g_strcut(file, /*len(".java")*/5);
       gchar* fullname = g_strconcat(package, ".", tag, NULL);
+      g_static_rw_lock_writer_lock(&parser->_tags_store_lock);
       java_tags_store_add(parser->tags_store, tag, fullname);
+      g_static_rw_lock_writer_unlock(&parser->_tags_store_lock);
       g_free(fullname);
       g_free(tag);
       parser->_stats.tags++;
@@ -97,26 +102,40 @@ JavaTagsParser* jt_parser_new(GPtrArray* paths, JavaTagsStore* tags_store) {
   JavaTagsParser* parser = g_new(JavaTagsParser, 1);
   parser->paths = paths;
   parser->tags_store = tags_store;
+  g_static_rw_lock_init(&parser->_tags_store_lock);
+  parser->_owns_store = FALSE;
   parser->_mutex = g_mutex_new();
   jt_parser_stats_init(&parser->_stats);
   jt_parser_stats_init(&parser->_safe_stats);
   parser->_thread = NULL;
   parser->_abort = FALSE;
-  parser->_orphan = FALSE;
+  parser->_ref_count = 1;
+}
+
+void jt_parser_add_ref(JavaTagsParser* parser) {
+  g_mutex_lock(parser->_mutex);
+  parser->_ref_count++;
+  g_mutex_unlock(parser->_mutex);
+}
+
+void jt_parser_release(JavaTagsParser* parser) {
+  gboolean has_references = FALSE;
+  g_mutex_lock(parser->_mutex);
+  parser->_ref_count--;
+  has_references = (parser->_ref_count > 0);
+  g_mutex_unlock(parser->_mutex);
+  if (!has_references) {
+    jt_parser_free(parser);
+  }
 }
 
 void jt_parser_free(JavaTagsParser* parser) {
-  if (!parser) {
-    return;
-  }
-  jt_parser_abort(parser);
-  jt_parser_wait(parser); // joins and release parser->_thread.
   g_mutex_free(parser->_mutex);
-
   g_ptr_array_free(parser->paths, TRUE);
-  if (parser->_orphan) {
+  if (parser->_owns_store) {
     java_tags_store_free(parser->tags_store);
   }
+  g_static_rw_lock_free(&parser->_tags_store_lock);
 }
 
 gpointer jt_parser_thread(JavaTagsParser* parser) {
@@ -126,18 +145,42 @@ gpointer jt_parser_thread(JavaTagsParser* parser) {
     jt_parser_parse_recursive(parser, (const gchar*) parser->paths->pdata[i]);
     msgwin_status_add("Finished loading java tags in directory %s.", parser->paths->pdata[i]);
   }
+  gboolean has_references = TRUE;
   g_mutex_lock(parser->_mutex);
   jt_parser_stats_copy(&parser->_stats, &parser->_safe_stats);
+  parser->_thread = NULL;
+  parser->_ref_count--;
+  has_references = (parser->_ref_count > 0);
   g_mutex_unlock(parser->_mutex);
+  if (!has_references) {
+    jt_parser_free(parser);
+  }
   return NULL;
 }
 
 void jt_parser_start(JavaTagsParser* parser) {
   g_mutex_lock(parser->_mutex);
   if (!parser->_thread) {
+    parser->_ref_count++;
     parser->_thread = g_thread_create((GThreadFunc) jt_parser_thread, parser, TRUE, NULL);
   }
   g_mutex_unlock(parser->_mutex);
+}
+
+gboolean jt_parser_working(JavaTagsParser* parser) {
+  gboolean working = FALSE;
+  g_mutex_lock(parser->_mutex);
+  working = (parser->_thread != NULL);
+  g_mutex_unlock(parser->_mutex);
+  return working;
+}
+
+void jt_parser_suspend(JavaTagsParser* parser) {
+  g_static_rw_lock_reader_lock(&parser->_tags_store_lock);
+}
+
+void jt_parser_resume(JavaTagsParser* parser) {
+  g_static_rw_lock_reader_unlock(&parser->_tags_store_lock);
 }
 
 void jt_parser_wait(JavaTagsParser* parser) {
@@ -147,10 +190,6 @@ void jt_parser_wait(JavaTagsParser* parser) {
   g_mutex_unlock(parser->_mutex);
   if (thread) {
     g_thread_join(thread);
-
-    g_mutex_lock(parser->_mutex);
-    parser->_thread = NULL;
-    g_mutex_unlock(parser->_mutex);
   }
 }
 
@@ -175,9 +214,9 @@ gboolean jt_parser_aborted(JavaTagsParser* parser) {
 }
 
 void jt_parser_orphan(JavaTagsParser* parser) {
-  // Not guarded b/c it is unsafe anyway (parser may be already deleted).
-  parser->_orphan = TRUE;
-  // Start a thread for waiting and deleting the parser.
-  g_thread_create((GThreadFunc) jt_parser_free, parser, FALSE, NULL);
+  g_mutex_lock(parser->_mutex);
+  parser->_owns_store = TRUE;
+  g_mutex_unlock(parser->_mutex);
+  jt_parser_release(parser);
 }
 

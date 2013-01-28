@@ -26,6 +26,10 @@ typedef struct _JavaTagsParser {
   GPtrArray* paths;
   // Store for parsed tags. Not owned unless orphaned.
   JavaTagsStore* tags_store;
+  // private: Lock for tags store.
+  GStaticRWLock _tags_store_lock;
+  // private: Indicates whether it owns the tags store.
+  gboolean _owns_store;
   // private: Mutex.
   GMutex* _mutex;
   // private: Worker thread.
@@ -36,19 +40,28 @@ typedef struct _JavaTagsParser {
   JavaTagsParserStats _safe_stats;
   // private: Abort signal.
   gboolean _abort;
-  // private: Orphan flag.
-  gboolean _orphan;
+  // private: Reference counting.
+  gint _ref_count;
 } JavaTagsParser;
 
-// Constructor.
+// Constructor: creates a parser with reference count set to 1.
 // @param paths The paths to parse. Takes ownership.
 // @param store Store for parsed tags. Must be available for the parser lifetime.
 JavaTagsParser* jt_parser_new(GPtrArray* paths, JavaTagsStore* store);
-// Destructor: aborts and waits for completion before destroying data.
-void jt_parser_free(JavaTagsParser* parser);
+// Increments the reference count. Should have a paired jt_parser_release when no longer needed.
+void jt_parser_add_ref(JavaTagsParser* parser);
+// Notifies parser as being less used... automatically destroys the parser and
+// its content when no longer referenced.
+void jt_parser_release(JavaTagsParser* parser);
 
 // Starts the effective scanning and parsing. Can be called a single time for a parser.
 void jt_parser_start(JavaTagsParser* parser);
+// Indicates whether the parser is actively performing any work.
+gboolean jt_parser_working(JavaTagsParser* parser);
+// Suspend updates to store for reading purposes.
+void jt_parser_suspend(JavaTagsParser* parser);
+// Resumes updates to store.
+void jt_parser_resume(JavaTagsParser* parser);
 // Waits until the parser has finished.
 // Thread safe.
 void jt_parser_wait(JavaTagsParser* parser);

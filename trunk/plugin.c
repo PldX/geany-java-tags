@@ -32,7 +32,9 @@ typedef struct _JavaTagsPlugin {
   JavaTagsPrefs* project_prefs;
   // Store.
   JavaTagsStore* tags_store;
+  // Parser and its mutex.
   JavaTagsParser* tags_parser;
+  GMutex* tags_parser_mutex;
   // Menus.
   GtkWidget* import_menu_item;
 } JavaTagsPlugin;
@@ -43,6 +45,7 @@ static void jtp_init(JavaTagsPlugin* jtp) {
   jtp->project_prefs = NULL;
   jtp->tags_store = NULL;
   jtp->tags_parser = NULL;
+  jtp->tags_parser_mutex = g_mutex_new();
   jtp->import_menu_item = NULL;
 }
 
@@ -54,7 +57,6 @@ static void jtp_unload_prefs(JavaTagsPlugin* jtp);
 static void jtp_on_configure_response(GtkDialog* dlg, gint resp, JTPrefsDlg* prefs_dlg);
 
 static void jtp_load_tags(JavaTagsPlugin* jtp);
-static void jtp_wait_tags(JavaTagsPlugin* jtp);
 static void jtp_unload_tags(JavaTagsPlugin* jtp);
 static void jtp_reload_tags(JavaTagsPlugin* jtp);
 
@@ -115,13 +117,23 @@ static void jtp_on_configure_response(GtkDialog* dlg, gint resp, JTPrefsDlg* pre
 // Tags store.
 ////////////////////////////////////////////////////////////////////////////////
 
-static gboolean jtp_show_parser_stats(JavaTagsParser* tags_parser) {
-  if (jtp_instance.tags_parser != tags_parser) {
-    return FALSE;
-  }
+static void jtp_show_parser_stats(JavaTagsParser* tags_parser) {
   JavaTagsParserStats stats;
   jt_parser_get_stats(tags_parser, &stats);
   ui_set_statusbar(FALSE, "Java tags: %d", stats.tags);
+}
+
+static gboolean jtp_refresh_parser_stats(JavaTagsParser* tags_parser) {
+  // Show stats if active.
+  if (jtp_instance.tags_parser == tags_parser) {
+    jtp_show_parser_stats(tags_parser);
+  }
+  // Release parser and uninstall when no longer working.
+  // NOTE: It might be too early if worker thread is not started yet... to be solved in parser.
+  if (!jt_parser_working(tags_parser)) {
+    jt_parser_release(tags_parser);
+    return FALSE; // Stops further notifications.
+  }
   return TRUE;
 }
 
@@ -142,30 +154,21 @@ static void jtp_load_tags(JavaTagsPlugin* jtp) {
       g_ptr_array_add(paths, (gpointer) g_str_replace(*ppath, "%p", project_base_path));
     }
   }
-  jtp->tags_parser = jt_parser_new(paths, java_tags_store_new());
-  // TODO: This segfaults when unloaded.
-  g_timeout_add_seconds(3, (GSourceFunc) jtp_show_parser_stats, jtp->tags_parser);
+  jtp->tags_store = java_tags_store_new();
+  jtp->tags_parser = jt_parser_new(paths, jtp->tags_store);
+  jt_parser_add_ref(jtp->tags_parser); // Reference for jtp_refresh_parser_stats.
+  plugin_timeout_add(geany_plugin, 3, (GSourceFunc) jtp_refresh_parser_stats, jtp->tags_parser);
   jt_parser_start(jtp->tags_parser);
-}
-
-static void jtp_wait_tags(JavaTagsPlugin* jtp) {
-  if (!jtp->tags_parser) {
-    return;
-  }
-  jt_parser_wait(jtp->tags_parser);
-  jtp->tags_store = jtp->tags_parser->tags_store;
-  jtp_show_parser_stats(jtp->tags_parser);
-  jt_parser_free(jtp->tags_parser);
-  jtp->tags_parser = NULL;
 }
 
 static void jtp_unload_tags(JavaTagsPlugin* jtp) {
   if (jtp->tags_parser) {
     jt_parser_abort(jtp->tags_parser);
-    jt_parser_orphan(jtp->tags_parser);
+    jt_parser_orphan(jtp->tags_parser); // Release the store.
     jtp->tags_parser = NULL;
+  } else {
+    java_tags_store_free(jtp->tags_store);
   }
-  java_tags_store_free(jtp->tags_store);
   jtp->tags_store = NULL;
 }
 
@@ -196,7 +199,18 @@ static void jtp_cleanup_menus(JavaTagsPlugin* jtp) {
 static void jtp_on_activate_import(GtkMenuItem* menuitem, JavaTagsPlugin* jtp) {
   GeanyDocument* doc = document_get_current();
   if (doc) {
-    jtp_wait_tags(jtp);
+    gboolean resume_parser = FALSE;
+    if (jtp->tags_parser) {
+      jtp_show_parser_stats(jtp->tags_parser); // Ensure up-to-date stats.
+      if (jt_parser_working(jtp->tags_parser)) {
+        jt_parser_suspend(jtp->tags_parser);
+        resume_parser = TRUE;
+      } else {
+        JavaTagsParser* parser = jtp->tags_parser;
+        jtp->tags_parser = NULL;
+        jt_parser_release(parser);
+      }
+    }
 
     ScintillaObject* sci = doc->editor->sci;
     gchar* init_tag = sci_get_current_word_text(sci);
@@ -211,6 +225,10 @@ static void jtp_on_activate_import(GtkMenuItem* menuitem, JavaTagsPlugin* jtp) {
 
     g_free(tag);
     g_free(init_tag);
+    
+    if (resume_parser) {
+      jt_parser_resume(jtp->tags_parser);
+    }
   }
 }
 
